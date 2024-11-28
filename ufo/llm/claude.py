@@ -1,19 +1,17 @@
-import base64
 import re
 import time
-from io import BytesIO
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-import google.generativeai as genai
+import anthropic
 from PIL import Image
 
 from ufo.llm.base import BaseService
 from ufo.utils import print_with_color
 
 
-class GeminiService(BaseService):
+class ClaudeService(BaseService):
     """
-    A service class for Gemini models.
+    A service class for Claude models.
     """
 
     def __init__(self, config: Dict[str, Any], agent_type: str):
@@ -28,7 +26,7 @@ class GeminiService(BaseService):
         self.prices = self.config["PRICES"]
         self.max_retry = self.config["MAX_RETRY"]
         self.api_type = self.config_llm["API_TYPE"].lower()
-        genai.configure(api_key=self.config_llm["API_KEY"])
+        self.client = anthropic.Anthropic(api_key=self.config_llm["API_KEY"])
 
     def chat_completion(
         self,
@@ -55,27 +53,23 @@ class GeminiService(BaseService):
         )
         top_p = top_p if top_p is not None else self.config["TOP_P"]
         max_tokens = max_tokens if max_tokens is not None else self.config["MAX_TOKENS"]
-        genai_config = genai.GenerationConfig(
-            candidate_count=n,
-            max_output_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            response_mime_type="application/json",
-        )
-        self.client = genai.GenerativeModel(self.model, generation_config=genai_config)
 
         responses = []
         cost = 0.0
+        system_prompt, user_prompt = self.process_messages(messages)
 
         for _ in range(n):
             for _ in range(self.max_retry):
                 try:
-                    response = self.client.generate_content(
-                        self.process_messages(messages),
+                    response = self.client.messages.create(
+                        max_tokens=max_tokens,
+                        model=self.model,
+                        system=system_prompt,
+                        messages=user_prompt,
                     )
-                    responses.append(response.text)
-                    prompt_tokens = response.usage_metadata.prompt_token_count
-                    completion_tokens = response.usage_metadata.candidates_token_count
+                    responses.append(response.content[0].text)
+                    prompt_tokens = response.usage.input_tokens
+                    completion_tokens = response.usage.output_tokens
                     cost += self.get_cost_estimator(
                         self.api_type,
                         self.model,
@@ -84,7 +78,12 @@ class GeminiService(BaseService):
                         completion_tokens,
                     )
                 except Exception as e:
-                    print_with_color(f"Error making API request: {e}", "red")
+                    import traceback
+
+                    error_trace = traceback.format_exc()
+                    print_with_color(
+                        f"Error when making API request: {error_trace}", "red"
+                    )
                     try:
                         print_with_color(response, "red")
                     except:
@@ -94,40 +93,42 @@ class GeminiService(BaseService):
 
         return responses, cost
 
-    def process_messages(self, messages: List[Dict[str, str]]) -> List[str]:
+    def process_messages(
+        self, messages: List[Dict[str, str]]
+    ) -> Tuple[str, list[Dict]]:
         """
-        Process the given messages and extract prompts from them.
-        :param messages: The messages to process.
-        :return: A list of prompts extracted from the messages.
+        Processes the messages to generate the system and user prompts.
+        :param messages: A list of message dictionaries.
+        :return: A tuple containing the system prompt (str) and the user prompt (list).
         """
 
-        prompt_contents = []
-
+        system_prompt = ""
+        user_prompt = {"role": "user", "content": []}
         if isinstance(messages, dict):
             messages = [messages]
         for message in messages:
             if message["role"] == "system":
-                prompt = f"Your general instruction: {message['content']}"
-                prompt_contents.append(prompt)
+                system_prompt = message["content"]
             else:
                 for content in message["content"]:
                     if content["type"] == "text":
-                        prompt = content["text"]
-                        prompt_contents.append(prompt)
+                        user_prompt["content"].append(content)
                     elif content["type"] == "image_url":
-                        prompt = self.base64_to_image(content["image_url"]["url"])
-                        prompt_contents.append(prompt)
-        return prompt_contents
-
-    def base64_to_image(self, base64_str: str) -> Image.Image:
-        """
-        Converts a base64 encoded image string to a PIL Image object.
-        :param base64_str: The base64 encoded image string.
-        :return: The PIL Image object.
-        """
-
-        base64_data = re.sub("^data:image/.+;base64,", "", base64_str)
-        byte_data = base64.b64decode(base64_data)
-        image_data = BytesIO(byte_data)
-        img = Image.open(image_data)
-        return img
+                        data_url = content["image_url"]["url"]
+                        match = re.match(r"data:(.*?);base64,(.*)", data_url)
+                        if match:
+                            media_type = match.group(1)
+                            base64_data = match.group(2)
+                            user_prompt["content"].append(
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": media_type,
+                                        "data": base64_data,
+                                    },
+                                }
+                            )
+                        else:
+                            raise ValueError("Invalid image URL")
+        return system_prompt, [user_prompt]

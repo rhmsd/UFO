@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageGrab
 from pywinauto.controls.uiawrapper import UIAWrapper
 from pywinauto.win32structures import RECT
 
+from ufo import utils
 from ufo.config.config import Config
 
 configs = Config.get_instance().config_data
@@ -49,7 +50,7 @@ class ControlPhotographer(Photographer):
         :return: The screenshot."""
         # Capture single window screenshot
         screenshot = self.control.capture_as_image()
-        if save_path is not None:
+        if save_path is not None and screenshot is not None:
             screenshot.save(save_path, compress_level=DEFAULT_PNG_COMPRESS_LEVEL)
         return screenshot
 
@@ -73,7 +74,7 @@ class DesktopPhotographer(Photographer):
         :return: The screenshot.
         """
         screenshot = ImageGrab.grab(all_screens=self.all_screens)
-        if save_path is not None:
+        if save_path is not None and screenshot is not None:
             screenshot.save(save_path, compress_level=DEFAULT_PNG_COMPRESS_LEVEL)
         return screenshot
 
@@ -174,7 +175,7 @@ class RectangleDecorator(PhotographerDecorator):
                 screenshot = self.draw_rectangles(
                     screenshot, coordinate=adjusted_rect, color=self.color
                 )
-        if save_path is not None:
+        if save_path is not None and screenshot is not None:
             screenshot.save(save_path, compress_level=DEFAULT_PNG_COMPRESS_LEVEL)
         return screenshot
 
@@ -362,7 +363,7 @@ class AnnotationDecorator(PhotographerDecorator):
                 ),
             )
 
-        if save_path is not None:
+        if save_path is not None and screenshot_annotated is not None:
             screenshot_annotated.save(
                 save_path, compress_level=DEFAULT_PNG_COMPRESS_LEVEL
             )
@@ -581,6 +582,7 @@ class PhotographerFacade:
         """
         buffered = BytesIO()
         image.save(buffered, format="PNG", optimize=True)
+
         return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
     @staticmethod
@@ -592,6 +594,13 @@ class PhotographerFacade:
         :return: The base64 string.
         """
 
+        # If image path not exist, return an empty image string
+        if not os.path.exists(image_path):
+
+            utils.print_with_color(f"Waring: {image_path} does not exist.", "yellow")
+            empty_image_string = "data:image/png;base64,"
+            return empty_image_string
+
         file_name = os.path.basename(image_path)
         mime_type = (
             mime_type if mime_type is not None else mimetypes.guess_type(file_name)[0]
@@ -600,8 +609,9 @@ class PhotographerFacade:
             encoded_image = base64.b64encode(image_file.read()).decode("ascii")
 
         if mime_type is None or not mime_type.startswith("image/"):
-            print(
-                "Warning: mime_type is not specified or not an image mime type. Defaulting to png."
+            utils.print_with_color(
+                "Warning: mime_type is not specified or not an image mime type. Defaulting to png.",
+                "yellow",
             )
             mime_type = "image/png"
 

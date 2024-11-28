@@ -68,7 +68,7 @@ UFO sightings have garnered attention from various media outlets, including:
 * For other communications, please contact [ufo-agent@microsoft.com](mailto:ufo-agent@microsoft.com)
 ---
 
-<!-- ## 🎬 Demo Examples
+## 🎬 Demo Examples
 
 We present two demo videos that complete user request on Windows OS using UFO. For more case study, please consult our [technical report](https://arxiv.org/abs/2402.07939).
 
